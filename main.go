@@ -48,13 +48,18 @@ var randReadCmd = &cli.Command{
 			Usage: "",
 			Value: 50,
 		},
+		&cli.IntFlag{
+			Name:  "timeout",
+			Usage: "",
+			Value: 3000,
+		},
 	},
 	Action: func(c *cli.Context) error {
 		args := c.Args().Slice()
 		if len(args) < 1 {
 			return fmt.Errorf("[usage] xlfs random-read-os [filename]")
 		}
-
+		maxTimeout := c.Int("timeout")
 		sf, err := os.Open(args[0])
 		if err != nil {
 			return err
@@ -97,14 +102,27 @@ var randReadCmd = &cli.Command{
 
 				off := rand.Intn(int(fileSize) - bufSize)
 				now := time.Now()
-				_, err = sf.ReadAt(buf, int64(off))
-				if err != nil {
-					fmt.Println(err)
-					return
+				ch1 := make(chan struct{})
+				isTimeout := true
+				go func(ch1 chan struct{}, off int64) {
+					defer func() {
+						ch1 <- struct{}{}
+					}()
+					_, err = sf.ReadAt(buf, off)
+					if err != nil {
+						fmt.Println(err)
+						return
+					}
+				}(ch1, int64(off))
+				select {
+				case <-ch1:
+					isTimeout = false
+				case <-time.After(time.Millisecond * time.Duration(maxTimeout)):
+
 				}
 				te := time.Since(now).Microseconds()
 				records[i] = te
-				fmt.Printf("read %d data, time elapsed: %s\n", len(buf), cv(te))
+				fmt.Printf("read %d data, time elapsed: %s, timeout: %v\n", len(buf), cv(te), isTimeout)
 			}(i, records)
 		}
 		wg.Wait()
